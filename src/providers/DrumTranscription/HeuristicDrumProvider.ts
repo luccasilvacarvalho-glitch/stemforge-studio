@@ -23,6 +23,17 @@ import { toMonoFloat32 } from '@/utils/audio';
  *   5. Manual correction  - every event stays fully editable in the UI;
  *                           this provider must never block correction.
  *
+ * PERFORMANCE NOTE: the per-frame spectrum uses a real FFT (radix-2
+ * Cooley-Tukey, O(N log N)) rather than a naive DFT (O(N^2)). On a full
+ * song this is the difference between a few hundred milliseconds and the
+ * browser tab freezing/"Page Unresponsive" for minutes - a naive DFT at
+ * fftSize=1024 over tens of thousands of frames is billions of
+ * operations. The main frame loop also yields to the browser every few
+ * hundred frames (`yieldToMain`) so the tab stays responsive and progress
+ * updates are visible, even though everything still runs on the main
+ * thread. A future step (see ROADMAP.md) would move this into a Web
+ * Worker/AudioWorklet for true off-thread processing on very long files.
+ *
  * TODO: CONNECT REAL MODEL
  * Swap this for a trained drum-transcription model (e.g. an ADT/ODT
  * model served behind DrumTranscriptionProvider) when available - the
@@ -39,27 +50,31 @@ export class HeuristicDrumProvider implements DrumTranscriptionProvider {
   ): Promise<DrumTranscriptionResult> {
     const sampleRate = buffer.sampleRate;
     const mono = toMonoFloat32(buffer);
-    onProgress?.(10);
+    onProgress?.(5);
 
     const fftSize = 1024;
-    const hopSize = 256;
+    const hopSize = 512; // ~11.6ms at 44.1kHz - fine-grained enough for drum onsets
     const frames = frameSignal(mono, fftSize, hopSize);
-    onProgress?.(30);
+    onProgress?.(10);
 
-    const spectralFlux = computeSpectralFlux(frames, sampleRate);
-    onProgress?.(55);
-
-    const onsetFrameIndices = pickOnsetPeaks(spectralFlux);
+    const spectralFlux = await computeSpectralFluxAsync(frames, fftSize, (pct) =>
+      onProgress?.(10 + Math.round(pct * 0.6)) // spectral flux is the bulk of the work: 10-70%
+    );
     onProgress?.(70);
 
+    const onsetFrameIndices = pickOnsetPeaks(spectralFlux);
+    onProgress?.(80);
+
     const events: DrumEvent[] = [];
+    const window = hannWindowTable(fftSize);
+    let processed = 0;
     for (const frameIdx of onsetFrameIndices) {
       const startSample = frameIdx * hopSize;
       const analysisWindow = mono.subarray(
         startSample,
         Math.min(startSample + fftSize, mono.length)
       );
-      const features = extractFeatures(analysisWindow, sampleRate);
+      const features = extractFeatures(analysisWindow, sampleRate, fftSize, window);
       const { type, confidence } = classify(features);
 
       events.push({
@@ -71,6 +86,12 @@ export class HeuristicDrumProvider implements DrumTranscriptionProvider {
         velocity: clamp01(features.rms * 3),
         manuallyEdited: false
       });
+
+      processed++;
+      if (processed % 200 === 0) {
+        onProgress?.(80 + Math.round((processed / onsetFrameIndices.length) * 20));
+        await yieldToMain();
+      }
     }
     onProgress?.(100);
 
@@ -80,6 +101,10 @@ export class HeuristicDrumProvider implements DrumTranscriptionProvider {
 
 // ---------- DSP helpers ----------
 
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function frameSignal(samples: Float32Array, fftSize: number, hopSize: number): Float32Array[] {
   const frames: Float32Array[] = [];
   for (let start = 0; start + fftSize <= samples.length; start += hopSize) {
@@ -88,35 +113,93 @@ function frameSignal(samples: Float32Array, fftSize: number, hopSize: number): F
   return frames;
 }
 
-function magnitudeSpectrum(frame: Float32Array): Float32Array {
-  // Lightweight DFT magnitude (not FFT-optimized) - fine for offline analysis
-  // at typical song lengths given the hop/frame sizes used here.
-  const N = frame.length;
-  const half = N / 2;
+function hannWindowTable(N: number): Float32Array {
+  const table = new Float32Array(N);
+  for (let n = 0; n < N; n++) {
+    table[n] = 0.5 * (1 - Math.cos((2 * Math.PI * n) / (N - 1)));
+  }
+  return table;
+}
+
+/**
+ * Iterative radix-2 Cooley-Tukey FFT, in place. `real`/`imag` must have a
+ * power-of-two length. This is what makes analyzing a full song feasible
+ * in the browser - see the performance note in the file header.
+ */
+function fftInPlace(real: Float32Array, imag: Float32Array): void {
+  const n = real.length;
+
+  // Bit-reversal permutation
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      const tr = real[i];
+      real[i] = real[j];
+      real[j] = tr;
+      const ti = imag[i];
+      imag[i] = imag[j];
+      imag[j] = ti;
+    }
+  }
+
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len;
+    const wr = Math.cos(ang);
+    const wi = Math.sin(ang);
+    const half = len >> 1;
+    for (let i = 0; i < n; i += len) {
+      let curWr = 1;
+      let curWi = 0;
+      for (let j = 0; j < half; j++) {
+        const ur = real[i + j];
+        const ui = imag[i + j];
+        const vr = real[i + j + half] * curWr - imag[i + j + half] * curWi;
+        const vi = real[i + j + half] * curWi + imag[i + j + half] * curWr;
+        real[i + j] = ur + vr;
+        imag[i + j] = ui + vi;
+        real[i + j + half] = ur - vr;
+        imag[i + j + half] = ui - vi;
+        const nextWr = curWr * wr - curWi * wi;
+        const nextWi = curWr * wi + curWi * wr;
+        curWr = nextWr;
+        curWi = nextWi;
+      }
+    }
+  }
+}
+
+/** Windowed magnitude spectrum (first half of bins) via FFT. `fftSize` must be a power of 2. */
+function magnitudeSpectrumFFT(frame: Float32Array, fftSize: number, window: Float32Array): Float32Array {
+  const real = new Float32Array(fftSize);
+  const imag = new Float32Array(fftSize);
+  const len = Math.min(frame.length, fftSize);
+  for (let n = 0; n < len; n++) real[n] = frame[n] * window[n];
+  // Remaining samples (if frame is shorter than fftSize, e.g. the last
+  // frame of the song) stay zero - implicit zero-padding.
+
+  fftInPlace(real, imag);
+
+  const half = fftSize / 2;
   const mags = new Float32Array(half);
   for (let k = 0; k < half; k++) {
-    let re = 0;
-    let im = 0;
-    for (let n = 0; n < N; n++) {
-      const angle = (-2 * Math.PI * k * n) / N;
-      const windowed = frame[n] * hannWindow(n, N);
-      re += windowed * Math.cos(angle);
-      im += windowed * Math.sin(angle);
-    }
-    mags[k] = Math.sqrt(re * re + im * im);
+    mags[k] = Math.sqrt(real[k] * real[k] + imag[k] * imag[k]);
   }
   return mags;
 }
 
-function hannWindow(n: number, N: number): number {
-  return 0.5 * (1 - Math.cos((2 * Math.PI * n) / (N - 1)));
-}
-
-function computeSpectralFlux(frames: Float32Array[], _sampleRate: number): Float32Array {
+async function computeSpectralFluxAsync(
+  frames: Float32Array[],
+  fftSize: number,
+  onProgress?: (pct: number) => void
+): Promise<Float32Array> {
   const flux = new Float32Array(frames.length);
+  const window = hannWindowTable(fftSize);
   let prevMag: Float32Array | null = null;
+
   for (let i = 0; i < frames.length; i++) {
-    const mag = magnitudeSpectrum(frames[i]);
+    const mag = magnitudeSpectrumFFT(frames[i], fftSize, window);
     if (prevMag) {
       let sum = 0;
       for (let k = 0; k < mag.length; k++) {
@@ -126,6 +209,11 @@ function computeSpectralFlux(frames: Float32Array[], _sampleRate: number): Float
       flux[i] = sum;
     }
     prevMag = mag;
+
+    if (i % 300 === 0) {
+      onProgress?.(Math.round((i / frames.length) * 100));
+      await yieldToMain();
+    }
   }
   return flux;
 }
@@ -158,9 +246,14 @@ interface DrumFeatures {
   rms: number;
 }
 
-function extractFeatures(window: Float32Array, sampleRate: number): DrumFeatures {
-  const mags = magnitudeSpectrum(window);
-  const binHz = sampleRate / (window.length || 1);
+function extractFeatures(
+  window: Float32Array,
+  sampleRate: number,
+  fftSize: number,
+  windowTable: Float32Array
+): DrumFeatures {
+  const mags = magnitudeSpectrumFFT(window, fftSize, windowTable);
+  const binHz = sampleRate / fftSize;
 
   let lowEnergy = 0;
   let midEnergy = 0;
