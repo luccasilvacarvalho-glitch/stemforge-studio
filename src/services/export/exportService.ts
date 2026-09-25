@@ -42,7 +42,8 @@ export function exportProjectJson(project: ProjectFile) {
 
 export function exportDrumMidi(events: DrumEvent[], bpm: number, name = 'drums') {
   const bytes = exportDrumEventsToMidi(events, bpm);
-  const blob = new Blob([bytes], { type: 'audio/midi' });
+  const arrayBuffer = new Uint8Array(bytes).buffer;
+  const blob = new Blob([arrayBuffer], { type: 'audio/midi' });
   downloadBlob(blob, `${name}.mid`);
 }
 
