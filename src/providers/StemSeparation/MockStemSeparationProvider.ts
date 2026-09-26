@@ -48,23 +48,33 @@ export class MockStemSeparationProvider implements StemSeparationProvider {
       format: audioFile.type || 'audio/wav'
     };
 
-    const makeStem = (name: 'vocals' | 'drums' | 'bass' | 'other', label: string) => ({
+    const makeStem = (
+      name: 'vocals' | 'drums' | 'bass' | 'other',
+      label: string,
+      muteByDefault: boolean
+    ) => ({
       id: `${name}-${crypto.randomUUID()}`,
       name,
       label,
       fileUrl: url,
       meta,
       waveform: peaks,
-      strip: defaultChannelStrip()
+      // Since every "stem" here is literally the same audio file, playing
+      // all four unmuted at once would sum to ~4x the original loudness
+      // and clip/distort. Only one starts unmuted so the mix sounds
+      // normal on load; the others are there to explore the UI, not to
+      // be layered on top of the first (they're not actually separate
+      // audio - see the TODO above).
+      strip: { ...defaultChannelStrip(), mute: muteByDefault }
     });
 
     onProgress?.(100);
 
     return {
-      vocals: makeStem('vocals', 'Vocals (mock: same as source)'),
-      drums: makeStem('drums', 'Drums (mock: same as source)'),
-      bass: makeStem('bass', 'Bass (mock: same as source)'),
-      other: makeStem('other', 'Other (mock: same as source)'),
+      vocals: makeStem('vocals', 'Vocals (mock: same as source)', false),
+      drums: makeStem('drums', 'Drums (mock: same as source)', true),
+      bass: makeStem('bass', 'Bass (mock: same as source)', true),
+      other: makeStem('other', 'Other (mock: same as source)', true),
       isMock: true,
       providerName: this.name
     };

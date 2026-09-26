@@ -22,6 +22,7 @@ export default function Studio() {
   const { tracks: recordings, updateTrackStrip: updateRecordingStrip } = useRecordingStore();
   const [selectedStem, setSelectedStem] = useState<StemName | null>(null);
   const [view, setView] = useState<StudioView>('overview');
+  const [startedBlank, setStartedBlank] = useState(false);
   useSynchronizedPlayback(stems, recordings);
 
   const stemList: Stem[] = stems
@@ -29,6 +30,9 @@ export default function Studio() {
     : [];
 
   const isReady = progress.stage === 'ready';
+  // A blank project (recording-only, no uploaded song) shows the same
+  // workstation shell, just without any stems/drum-analysis content.
+  const showWorkstation = isReady || startedBlank;
 
   function handleMixerChange(id: string, patch: Partial<Stem['strip']>) {
     if (stemList.some((s) => s.name === id)) {
@@ -55,10 +59,21 @@ export default function Studio() {
         <Sidebar activeView={view} onChangeView={setView} />
 
         <main className="flex flex-1 flex-col overflow-hidden">
-          {!fileName && (
+          {!fileName && !startedBlank && (
             <div className="flex flex-1 items-center justify-center p-4">
-              <div className="w-full max-w-xl">
+              <div className="w-full max-w-xl space-y-4">
                 <AudioUploader onFileSelected={loadFile} />
+                <div className="flex items-center gap-3 text-xs text-studio-textDim">
+                  <div className="h-px flex-1 bg-studio-border" />
+                  ou
+                  <div className="h-px flex-1 bg-studio-border" />
+                </div>
+                <button
+                  onClick={() => setStartedBlank(true)}
+                  className="w-full rounded-lg border border-studio-border bg-studio-panel2 py-3 text-sm font-medium hover:bg-studio-border"
+                >
+                  🎙️ Começar do zero (gravar sem enviar nenhuma música)
+                </button>
               </div>
             </div>
           )}
@@ -69,11 +84,20 @@ export default function Studio() {
             </div>
           )}
 
-          {isReady && (
+          {showWorkstation && (
             <>
               {(view === 'overview' || view === 'stems') && <EditToolbar />}
 
               <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+                {stems?.isMock && (view === 'overview' || view === 'stems') && (
+                  <div className="rounded-lg border border-studio-warn/40 bg-studio-warn/10 px-3 py-2 text-xs text-studio-warn">
+                    ⚠ Estes stems são um <strong>mock</strong>: hoje o app copia o mesmo áudio
+                    original em Vocals/Drums/Bass/Other — ainda não há separação de fato.
+                    Mutar/isolar um "stem" não isola o som de verdade até conectarmos um modelo
+                    real (veja Configurações → Providers ativos, e o README).
+                  </div>
+                )}
+
                 {(view === 'overview' || view === 'stems') && (
                   <section className="flex flex-col gap-2">
                     {stemList.map((stem) => (
@@ -89,22 +113,37 @@ export default function Studio() {
                     {recordings.map((rec) => (
                       <RecordedTrackRow key={rec.id} track={rec} />
                     ))}
+                    {stemList.length === 0 && recordings.length === 0 && (
+                      <p className="text-sm text-studio-textDim">
+                        Nenhuma track ainda. Aperte ⏺ (ou tecla R) na barra de transporte pra
+                        gravar algo.
+                      </p>
+                    )}
                   </section>
                 )}
 
                 {view === 'drum-editor' &&
                   (stems?.drums ? (
-                    events.length === 0 ? (
-                      <p className="text-sm text-studio-textDim">
-                        Nenhum evento de bateria detectado ainda. Use "Detectar eventos" no
-                        Editor de Bateria.
-                      </p>
-                    ) : (
-                      <DrumEditorPanel />
-                    )
+                    <>
+                      <div className="rounded-lg border border-studio-warn/40 bg-studio-warn/10 px-3 py-2 text-xs text-studio-warn">
+                        ⚠ A detecção de bateria roda hoje em cima do stem de bateria <em>mock</em>
+                        {' '}(= a música inteira, não só a bateria isolada), então instrumentos
+                        que tocam nas mesmas frequências podem ser classificados errado. A
+                        precisão mostrada ao lado reflete isso.
+                      </div>
+                      {events.length === 0 ? (
+                        <p className="text-sm text-studio-textDim">
+                          Nenhum evento de bateria detectado ainda. Use "Detectar eventos" no
+                          Editor de Bateria.
+                        </p>
+                      ) : (
+                        <DrumEditorPanel />
+                      )}
+                    </>
                   ) : (
                     <p className="text-sm text-studio-textDim">
-                      Nenhum stem de bateria disponível neste projeto.
+                      Nenhum stem de bateria disponível — envie uma música primeiro (a gravação
+                      do zero não passa pela análise de bateria).
                     </p>
                   ))}
 
@@ -140,7 +179,7 @@ export default function Studio() {
           )}
         </main>
 
-        {isReady && <DetailsSidebar selectedStemName={selectedStem} />}
+        {showWorkstation && <DetailsSidebar selectedStemName={selectedStem} />}
       </div>
     </div>
   );
@@ -164,6 +203,15 @@ function SettingsPanel() {
             {drumIsMock ? '⚠ Heurística local (onset + espectral)' : '✓ Modelo real'}
           </li>
         </ul>
+      </div>
+      <div className="rounded-lg border border-studio-border bg-studio-panel2 p-3">
+        <p className="mb-1 font-medium">Canais de bateria no Mixer</p>
+        <p className="text-studio-textDim">
+          ⚠ Os faders individuais de Kick/Snare/Clap/etc. no Mixer ainda não controlam áudio de
+          verdade — não existe isolamento de áudio por instrumento de bateria ainda (isso
+          depende de um modelo real de separação ou de re-síntese via MIDI). Eles preparam a
+          interface pra quando isso existir.
+        </p>
       </div>
       <p className="text-xs text-studio-textDim">
         Para conectar modelos reais, configure as variáveis de ambiente descritas em{' '}

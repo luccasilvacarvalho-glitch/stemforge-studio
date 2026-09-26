@@ -2,12 +2,17 @@ import { useEffect, useRef } from 'react';
 import { StemSeparationResult } from '@/types/stems';
 import { RecordedTrack } from '@/types/recording';
 import { useAudioStore } from '@/stores/audioStore';
+import { useEffectsStore } from '@/stores/effectsStore';
+import { EffectChain } from '@/services/audio/effects/EffectChain';
 
 /**
  * Plays every stem's <audio> element in sync, respecting per-stem
- * mute/solo/volume/pan. Uses plain HTMLAudioElement + WebAudio gain/pan
- * nodes rather than decoding everything into memory again, to keep this
- * responsive for multi-minute songs (spec section 24).
+ * mute/solo/volume/pan, and routes each track through its own effect
+ * chain (EQ/compressor/delay/reverb - see stores/effectsStore.ts and
+ * services/audio/effects/EffectChain.ts) before the gain/pan stage. Uses
+ * plain HTMLAudioElement + WebAudio nodes rather than decoding everything
+ * into memory again, to keep this responsive for multi-minute songs
+ * (spec section 24).
  */
 interface PlayableTrack {
   id: string;
@@ -26,6 +31,7 @@ export function useSynchronizedPlayback(
   const audioCtxRef = useRef<AudioContext | null>(null);
   const nodesRef = useRef<Map<string, { gain: GainNode; pan: StereoPannerNode }>>(new Map());
   const offsetsRef = useRef<Map<string, number>>(new Map());
+  const effectChainsRef = useRef<Map<string, EffectChain>>(new Map());
   const rafRef = useRef<number>();
 
   const tracks: PlayableTrack[] = [
@@ -50,6 +56,8 @@ export function useSynchronizedPlayback(
     els.clear();
     nodesRef.current.clear();
     offsetsRef.current.clear();
+    effectChainsRef.current.forEach((chain) => chain.dispose());
+    effectChainsRef.current.clear();
 
     if (tracks.length === 0) return;
     if (!audioCtxRef.current) {
@@ -63,19 +71,40 @@ export function useSynchronizedPlayback(
       audioEl.preload = 'auto';
 
       const source = ctx.createMediaElementSource(audioEl);
+      const chain = new EffectChain(ctx);
+      chain.sync(useEffectsStore.getState().getChain(t.id));
       const gain = ctx.createGain();
       const pan = ctx.createStereoPanner();
-      source.connect(gain).connect(pan).connect(ctx.destination);
+      source.connect(chain.input);
+      chain.output.connect(gain).connect(pan).connect(ctx.destination);
 
       els.set(t.id, audioEl);
       nodesRef.current.set(t.id, { gain, pan });
       offsetsRef.current.set(t.id, t.startOffsetSec ?? 0);
+      effectChainsRef.current.set(t.id, chain);
       applyStrip(t.id, t.strip);
     }
 
     return () => {
       els.forEach((el) => el.pause());
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackKey]);
+
+  // Keep each track's effect chain in sync with the effects store (EQ,
+  // compressor, delay, reverb settings/enable/order) without needing to
+  // rebuild the whole audio element graph.
+  useEffect(() => {
+    const unsubscribe = useEffectsStore.subscribe((state) => {
+      effectChainsRef.current.forEach((chain, id) => {
+        chain.sync(state.chains[id] ?? []);
+      });
+    });
+    // Apply once immediately too, in case effects were set before this ran.
+    effectChainsRef.current.forEach((chain, id) => {
+      chain.sync(useEffectsStore.getState().getChain(id));
+    });
+    return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackKey]);
 

@@ -32,25 +32,34 @@ resultado. Tudo local, sem depender de plugins de terceiros.
 - Sem edição de waveform da gravação ainda (cortar, normalizar) — só
   visualização, mute/solo, volume/pan.
 
-## Fase 2 — Efeitos ajustáveis (próximo passo natural)
+## Fase 2 — Efeitos ajustáveis (✅ implementado nesta sessão)
 
-Tudo via Web Audio API nativa (sem VST, sem dependências externas):
+Tudo via Web Audio API nativa (sem VST, sem dependências externas), como planejado:
 
-- **EQ paramétrico** (`BiquadFilterNode` em cascata: low-shelf, peaking,
-  high-shelf) com bandas ajustáveis.
-- **Compressor** (`DynamicsCompressorNode` nativo do Web Audio —
-  threshold, ratio, attack, release, knee já existem na API).
-- **Reverb** (via `ConvolverNode` com impulse responses geradas
-  proceduralmente ou um algoritmo de reverb simples tipo Schroeder/
-  Freeverb implementado em `AudioWorklet`).
-- **Delay** (`DelayNode` + feedback loop, com sync a BPM).
-- Cada efeito vira um nó num **effects chain** por canal (stem ou
-  gravação), editável na UI — um painel de "Insert Effects" no mixer,
-  parecido com um channel strip de DAW.
+- **EQ de 3 bandas** (`BiquadFilterNode`: low-shelf, peaking, high-shelf) —
+  frequência, ganho e Q ajustáveis por banda.
+- **Compressor** (`DynamicsCompressorNode` nativo) — threshold, ratio,
+  attack, release, knee.
+- **Delay** — `DelayNode` com loop de feedback e mix wet/dry, sincronizável
+  manualmente ao tempo da música.
+- **Reverb algorítmico** — `ConvolverNode` com impulse response gerada
+  proceduralmente (ruído branco com envelope de decaimento exponencial;
+  não é uma resposta de sala real amostrada, mas é convolução de verdade,
+  não um efeito fake).
 
-Arquitetura prevista: `src/services/audio/effects/` com uma interface
-`AudioEffect` (nome, parâmetros, `connect(input, output)`), similar ao
-padrão de providers já usado no resto do projeto.
+Arquitetura: `src/services/audio/effects/EffectChain.ts` monta e mantém a
+cadeia de nós de áudio por canal; `src/stores/effectsStore.ts` guarda a
+lista de efeitos por canal (chave = nome do stem ou id da gravação);
+`src/components/Effects/EffectsRack.tsx` é a interface pra adicionar,
+remover, reordenar, ativar/desativar (bypass) e ajustar parâmetros.
+Mudar um parâmetro (arrastar um slider) atualiza o `AudioParam` direto
+via `setTargetAtTime`, sem reconstruir o grafo de áudio — só muda quando
+você adiciona/remove/reordena/liga-desliga um efeito.
+
+**Limitação atual**: o rack de efeitos hoje só aparece pra stems
+selecionados (clique num stem na área de Stems). Gravações e canais de
+bateria ainda não têm essa interface conectada — é o próximo ajuste
+rápido, não uma reconstrução grande.
 
 ## Fase 3 — Autotune
 

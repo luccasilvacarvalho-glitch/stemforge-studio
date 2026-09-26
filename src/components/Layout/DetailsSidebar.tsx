@@ -4,6 +4,7 @@ import { useProjectStore } from '@/stores/projectStore';
 import { useDrumStore } from '@/stores/drumStore';
 import { useAudioStore } from '@/stores/audioStore';
 import Waveform from '@/components/Waveform/Waveform';
+import EffectsRack from '@/components/Effects/EffectsRack';
 import { DRUM_COLORS, DRUM_LABELS, STEM_COLORS, STEM_ICONS } from '@/utils/theme';
 import { DRUM_EVENT_TYPES, confidenceLevel } from '@/types/drums';
 
@@ -92,6 +93,10 @@ export default function DetailsSidebar({ selectedStemName }: Props) {
             <span title="Preview com fone">🎧</span>
           </div>
         </section>
+      )}
+
+      {selectedStem && (
+        <EffectsRack channelId={selectedStem.name} channelLabel={selectedStem.name} />
       )}
 
       {events.length > 0 && (

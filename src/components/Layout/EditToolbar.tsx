@@ -16,12 +16,14 @@ export default function EditToolbar({ zoomLabel = '1:1' }: Props) {
       {TOOLS.map((t) => (
         <button
           key={t.title}
-          title={t.title}
-          className="flex h-7 w-7 items-center justify-center rounded-md bg-studio-panel2 text-sm hover:bg-studio-border"
+          title={`${t.title} (ainda não implementado)`}
+          disabled
+          className="flex h-7 w-7 cursor-not-allowed items-center justify-center rounded-md bg-studio-panel2 text-sm opacity-40"
         >
           {t.icon}
         </button>
       ))}
+      <span className="text-[10px] text-studio-textDim">(ferramentas de edição em breve)</span>
       <span className="ml-auto text-xs text-studio-textDim">Zoom</span>
       <span className="text-xs font-mono text-studio-textDim">{zoomLabel}</span>
     </div>

@@ -68,8 +68,11 @@ export default function MixerBar({ stems, recordings, onChangeStemStrip }: Props
       {drumTypesWithEvents.length > 0 && (
         <>
           <div className="flex flex-col justify-center border-l border-studio-border pl-3">
-            <span className="text-[10px] uppercase text-studio-textDim [writing-mode:vertical-lr]">
-              Drum Channels
+            <span
+              className="text-[10px] uppercase text-studio-textDim [writing-mode:vertical-lr]"
+              title="Ainda sem áudio isolado por instrumento — só controla a interface, não o som"
+            >
+              Drum Channels ⚠
             </span>
           </div>
           {drumTypesWithEvents.map((type) => (

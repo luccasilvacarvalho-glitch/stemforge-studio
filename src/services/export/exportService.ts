@@ -42,6 +42,10 @@ export function exportProjectJson(project: ProjectFile) {
 
 export function exportDrumMidi(events: DrumEvent[], bpm: number, name = 'drums') {
   const bytes = exportDrumEventsToMidi(events, bpm);
+  // `bytes` is a Uint8Array whose ArrayBufferLike type isn't narrow enough
+  // for the DOM lib's BlobPart typing (it also allows SharedArrayBuffer-
+  // backed views, which Blob doesn't accept) - copy into a fresh
+  // ArrayBuffer-backed Uint8Array to satisfy the type checker safely.
   const arrayBuffer = new Uint8Array(bytes).buffer;
   const blob = new Blob([arrayBuffer], { type: 'audio/midi' });
   downloadBlob(blob, `${name}.mid`);

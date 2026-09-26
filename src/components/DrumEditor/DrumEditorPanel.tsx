@@ -105,11 +105,13 @@ export default function DrumEditorPanel() {
             />
 
             <div>
-              <p className="mb-1 text-xs text-studio-textDim">Sample</p>
+              <p className="mb-1 text-xs text-studio-textDim">Sample (em breve)</p>
               <select
                 value={activeChannel.sampleName}
+                disabled
+                title="Troca de sample ainda não implementada — precisa da Biblioteca de Samples (roadmap)"
                 onChange={(e) => updateChannel(activeType, { sampleName: e.target.value })}
-                className="w-full rounded bg-studio-panel2 px-2 py-1 text-sm"
+                className="w-full cursor-not-allowed rounded bg-studio-panel2 px-2 py-1 text-sm opacity-50"
               >
                 <option value={`${activeType}_default`}>{DRUM_LABELS[activeType]}_default</option>
                 <option value={`${activeType}_alt`}>{DRUM_LABELS[activeType]}_alt</option>
